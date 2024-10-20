@@ -152,66 +152,6 @@ class RoleExtractor(torch.nn.Module):
         # degrees = in_degrees + out_degrees
 
         approx_pagerank = self.approximate_pagerank(edge_index)
-        # approx_clustering = self.approximate_clustering(edge_index)
-
-        # nxG = nx.MultiDiGraph()
-        # nxG.add_edges_from(edge_index.t().tolist())
-        # print(nxG, edge_index)
-
-        # fill 0 if no edge
-        # page_rank = torch.zeros(self.num_nodes, device=self.feature_matrix.device)
-        # for node, ppr in nx.pagerank(nxG).items():
-        #     page_rank[node] = ppr
-        # cluster_coeff = torch.zeros(self.num_nodes, device=self.feature_matrix.device)
-        # for node, cc in nx.clustering(nx.DiGraph(nxG)).items():
-        #     cluster_coeff[node] = cc
-        # betweenness = torch.zeros(self.num_nodes, device=self.feature_matrix.device)
-        # for node, bc in nx.betweenness_centrality(nxG).items():
-        #     betweenness[node] = bc
-        # closeness = torch.zeros(self.num_nodes, device=self.feature_matrix.device)
-        # for node, cc in nx.closeness_centrality(nxG).items():
-        #     closeness[node] = cc
-
-        # local_entropy = torch.zeros(self.num_nodes, device=self.feature_matrix.device)
-
-        # # 遍历每个节点
-        # for node in range(batch_nodes.size(0)):
-        #     # 找到当前节点的邻居节点
-        #     neighbors = edge_index[1][edge_index[0] == node].unique()
-
-        #     # 如果没有邻居或者邻居数少于2个，熵为0
-        #     if len(neighbors) < 2:
-        #         continue
-
-        #     # 统计邻居之间的连通性
-        #     connections = 0
-        #     total_possible_connections = len(neighbors) * (len(neighbors) - 1)
-
-        #     # 遍历邻居节点，检查它们之间是否有连通性
-        #     for i in range(len(neighbors)):
-        #         for j in range(i + 1, len(neighbors)):
-        #             # 判断 neighbors[i] 和 neighbors[j] 之间是否存在边
-        #             if (
-        #                 (edge_index[0] == neighbors[i])
-        #                 & (edge_index[1] == neighbors[j])
-        #             ).any() or (
-        #                 (edge_index[0] == neighbors[j])
-        #                 & (edge_index[1] == neighbors[i])
-        #             ).any():
-        #                 connections += 1
-
-        #     # 如果邻居之间没有连通性，熵为0
-        #     if connections == 0:
-        #         local_entropy[node] = 0
-        #     else:
-        #         # 计算连通性概率
-        #         p = connections / total_possible_connections
-        #         p_i = torch.tensor([p, 1 - p])  # 连通和不连通的概率
-
-        #         # 计算结构熵
-        #         entropy = -torch.sum(p_i * torch.log(p_i + 1e-9))  # 避免log(0)
-        #         local_entropy[node] = entropy
-
         batch_importance_emb = self.resizer(importance_emb)
 
         # learnt node feature embedding
@@ -432,12 +372,12 @@ class CryptoFIRM(torch.nn.Module):
         #     node_times[edge_index[0][i]] = min(node_times[edge_index[0][i]], t[i])
         # print("node_times", node_times, node_times.size())
 
-        # 计算 msg_sum，考虑到 msg 可能为空的情况
+        # calculate the sum of messages for each node
         if full_msg.numel() == 0:
             logger.warning("msg is empty")
             msg_sum = torch.zeros(self.num_nodes, device=full_msg.device)
         else:
-            # 使用 scatter_add 来计算每个节点的 msg 总和
+            # use scatter_add to sum the messages for each node
             msg_sum = torch.zeros(self.num_nodes, full_msg.size(-1), device=full_msg.device)
             msg_sum.scatter_add_(
                 0, full_edge_index[0].unsqueeze(-1).expand(-1, full_msg.size(-1)), full_msg
@@ -484,24 +424,21 @@ class CryptoFIRM(torch.nn.Module):
         # role_sim /= temperature
 
         logger.debug(f"role_sim {role_sim} {role_sim.size()}")
-        # 根据相似度阈值划分正负样本
+        # split the similarity matrix into positive and negative samples by thresholding
         pos_mask = role_sim > similarity_threshold
         neg_mask = role_sim <= similarity_threshold
 
-        # 避免自相似度影响负样本的计算
+        # avoid self-similarity
         neg_mask.fill_diagonal_(0)
 
-        # 对正样本进行指数运算，并求和（用于稳定性，避免过大的指数值）
         max_sim = role_sim.max()
         exp_pos_sim = torch.exp(role_sim - max_sim) * pos_mask.float()
         pos_sim_sum = exp_pos_sim.sum(dim=1)
 
-        # 对负样本进行指数运算，并求和
         exp_neg_sim = torch.exp(role_sim - max_sim) * neg_mask.float()
         neg_sim_sum = exp_neg_sim.sum(dim=1)
 
-        # 计算InfoNCE-like损失
-        eps = 1e-9  # 为数值稳定性添加小的epsilon值
+        eps = 1e-9
         role_loss = -torch.log(
             (pos_sim_sum + eps) / (pos_sim_sum + neg_sim_sum + eps)
         ).mean()
